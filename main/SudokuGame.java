@@ -14,9 +14,9 @@ public class SudokuGame extends JFrame {
     private javax.swing.Timer gameTimer;
     private JLabel timerLabel, mistakeLabel, hintLabel;
     private int seconds = 0, mistakes = 0, hintsUsed = 0;
-    private final int MAX_HINTS = 3, MAX_MISTAKES = 3;
+    private final int MAX_HINTS = 3, MAX_MISTAKES = 4;
     private JButton[][] cells = new JButton[9][9];
-    private int[][] fullBoard, puzzleBoard;
+    private int[][] fullBoard, puzzleBoard, initialPuzzleBoard;
     private Stack<int[]> moveStack = new Stack<>();
     private int selectedRow = -1, selectedCol = -1;
     private List<String> scoreHistory = new ArrayList<>();
@@ -72,11 +72,11 @@ public class SudokuGame extends JFrame {
                     JOptionPane.QUESTION_MESSAGE, null, levels, difficultyLevel);
             if (newLevel != null) {
                 difficultyLevel = newLevel;
-                generatePuzzle();
-                startTimer();
-                setTitle("Sudoku - " + playerName + " [" + difficultyLevel + "]");
-                infoLabel.setText("Player: " + playerName + " | Level: " + difficultyLevel);
             }
+            generatePuzzle();
+            startTimer();
+            setTitle("Sudoku - " + playerName + " [" + difficultyLevel + "]");
+            infoLabel.setText("Player: " + playerName + " | Level: " + difficultyLevel);
         });
 
         restartBtn.addActionListener(e -> {
@@ -85,13 +85,12 @@ public class SudokuGame extends JFrame {
             mistakes = 0;
             hintsUsed = 0;
             updateStatusLabels();
-            generatePuzzle();
+            restoreInitialPuzzle();
             startTimer();
         });
 
         quitBtn.addActionListener(e -> System.exit(0));
         undoBtn.addActionListener(e -> undoMove());
-
         hintBtn.addActionListener(e -> useHint());
 
         JPanel buttonPanel = new JPanel(new FlowLayout());
@@ -104,8 +103,22 @@ public class SudokuGame extends JFrame {
 
         add(topPanel, BorderLayout.NORTH);
 
-        JPanel boardPanel = new JPanel(new GridLayout(9, 9));
+        JPanel boardPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                g.setColor(Color.BLACK);
+                for (int i = 0; i <= 9; i++) {
+                    if (i % 3 == 0) g.setColor(Color.BLACK);
+                    else g.setColor(Color.LIGHT_GRAY);
+                    g.drawLine(0, i * getHeight() / 9, getWidth(), i * getHeight() / 9);
+                    g.drawLine(i * getWidth() / 9, 0, i * getWidth() / 9, getHeight());
+                }
+            }
+        };
+        boardPanel.setLayout(new GridLayout(9, 9));
         Font cellFont = new Font("Monospaced", Font.BOLD, 20);
+
         for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
             JButton cell = new JButton();
             cell.setFont(cellFont);
@@ -114,17 +127,12 @@ public class SudokuGame extends JFrame {
             cell.setFocusPainted(false);
             cell.setFocusable(true);
             cell.addActionListener(e -> {
-                if (puzzleBoard[r][c] == 0) {
-                    clearSelection();
-                    selectedRow = r;
-                    selectedCol = c;
-                    // cell.setBorder(BorderFactory.createLineBorder(Color.GREEN, 3));
-                    cell.setBorder(UIManager.getBorder("Button.border"));
-
-                    // cells[r][c].requestFocus();
-                    cells[r][c].requestFocusInWindow(); // <- more reliable focus request
-
-                }
+                clearSelection();
+                selectedRow = r;
+                selectedCol = c;
+                highlightSameNumber(puzzleBoard[r][c]);
+                cell.setBorder(BorderFactory.createLineBorder(Color.GREEN, 3));
+                cell.requestFocusInWindow();
             });
             cell.addKeyListener(new KeyAdapter() {
                 public void keyPressed(KeyEvent e) {
@@ -132,20 +140,23 @@ public class SudokuGame extends JFrame {
                         int code = e.getKeyCode();
                         if (code >= KeyEvent.VK_1 && code <= KeyEvent.VK_9) {
                             int val = code - KeyEvent.VK_0;
-                            moveStack.push(new int[]{r, c});
+                            moveStack.push(new int[]{r, c, puzzleBoard[r][c]});
                             if (val == fullBoard[r][c]) {
-                                puzzleBoard[r][c] = val;  // Update puzzleBoard
+                                puzzleBoard[r][c] = val;
                                 cell.setText(String.valueOf(val));
-                                cell.setForeground(Color.BLUE); // Correct entry, use blue text
+                                cell.setForeground(Color.BLUE);
                             } else {
-                                puzzleBoard[r][c] = val;  // Even for wrong entries, you might want to update the board
+                                puzzleBoard[r][c] = val;
                                 cell.setText(String.valueOf(val));
-                                cell.setForeground(Color.RED); // Incorrect entry, use red text
+                                cell.setForeground(Color.RED);
                                 mistakes++;
                                 updateStatusLabels();
                                 if (mistakes >= MAX_MISTAKES) {
-                                    stopTimer();
-                                    JOptionPane.showMessageDialog(null, "Game Over: Too many mistakes!");
+                                    String[] levels = {"Easy", "Medium", "Hard"};
+                                    String newLevel = (String) JOptionPane.showInputDialog(null, "Select new level:", "Level", JOptionPane.QUESTION_MESSAGE, null, levels, difficultyLevel);
+                                    if (newLevel == null) newLevel = difficultyLevel;
+                                    difficultyLevel = newLevel;
+                                    generatePuzzle();
                                     return;
                                 } else {
                                     JOptionPane.showMessageDialog(null, "Wrong input!");
@@ -153,39 +164,67 @@ public class SudokuGame extends JFrame {
                             }
                             checkWin();
                         } else if (code == KeyEvent.VK_BACK_SPACE || code == KeyEvent.VK_DELETE) {
+                            moveStack.push(new int[]{r, c, puzzleBoard[r][c]});
                             cell.setText("");
-                            puzzleBoard[r][c] = 0; // Reset puzzleBoard value when clearing the cell
+                            puzzleBoard[r][c] = 0;
                         }
                     }
                 }
             });
-            
-            
             cells[i][j] = cell;
             boardPanel.add(cell);
         }
+
         add(boardPanel, BorderLayout.CENTER);
     }
 
-    private void useHint() {
-        if (selectedRow != -1 && selectedCol != -1 && puzzleBoard[selectedRow][selectedCol] == 0) {
-            if (hintsUsed >= MAX_HINTS) {
-                JOptionPane.showMessageDialog(this, "No more hints left!");
-                return;
-            }
-            int val = fullBoard[selectedRow][selectedCol];
-            cells[selectedRow][selectedCol].setText(String.valueOf(val));
-            cells[selectedRow][selectedCol].setForeground(Color.MAGENTA);
-            hintsUsed++;
-            updateStatusLabels();
-            checkWin();
-        } else {
-            JOptionPane.showMessageDialog(this, "Select an empty cell first!");
+    private void highlightSameNumber(int num) {
+        if (num == 0) return;
+        for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
+            if (puzzleBoard[i][j] == num) cells[i][j].setBackground(Color.YELLOW);
+            else cells[i][j].setBackground(null);
         }
     }
 
+    private void restoreInitialPuzzle() {
+        for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
+            puzzleBoard[i][j] = initialPuzzleBoard[i][j];
+            cells[i][j].setText(initialPuzzleBoard[i][j] == 0 ? "" : String.valueOf(initialPuzzleBoard[i][j]));
+            cells[i][j].setForeground(Color.BLACK);
+            cells[i][j].setBackground(null);
+        }
+    }
+
+    private void generatePuzzle() {
+        // fullBoard = SudokuCreator.generateFullBoard();
+        // puzzleBoard = SudokuRemover.generatePuzzle(fullBoard, difficultyLevel);
+        SudokuCreator creator = new SudokuCreator();
+        SudokuRemover remover = new SudokuRemover();
+        fullBoard = creator.generateFullBoard();
+        puzzleBoard = remover.removeElements(fullBoard, difficultyLevel);
+        initialPuzzleBoard = new int[9][9];
+        for (int i = 0; i < 9; i++) System.arraycopy(puzzleBoard[i], 0, initialPuzzleBoard[i], 0, 9);
+        for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
+            cells[i][j].setText(puzzleBoard[i][j] == 0 ? "" : String.valueOf(puzzleBoard[i][j]));
+            cells[i][j].setForeground(Color.BLACK);
+            cells[i][j].setBackground(null);
+        }
+        moveStack.clear();
+    }
+
+    private void startTimer() {
+        gameTimer = new javax.swing.Timer(1000, e -> {
+            seconds++;
+            timerLabel.setText("Time: " + seconds + "s");
+        });
+        gameTimer.start();
+    }
+
+    private void stopTimer() {
+        if (gameTimer != null) gameTimer.stop();
+    }
+
     private void updateStatusLabels() {
-        timerLabel.setText("Time: " + seconds + "s");
         mistakeLabel.setText("Mistakes: " + mistakes);
         hintLabel.setText("Hints Left: " + (MAX_HINTS - hintsUsed));
     }
@@ -196,183 +235,147 @@ public class SudokuGame extends JFrame {
         }
     }
 
-    // private void generatePuzzle() {
-    //     SudokuCreator creator = new SudokuCreator();
-    //     fullBoard = creator.generateFullBoard();
-    //     SudokuRemover remover = new SudokuRemover();
-    //     puzzleBoard = remover.removeElements(fullBoard, difficultyLevel);
-    //     updateBoardUI();
-    // }
-
-    private void generatePuzzle() {
-        SudokuCreator creator = new SudokuCreator();
-        fullBoard = creator.generateFullBoard();
-        SudokuRemover remover = new SudokuRemover();
-        puzzleBoard = remover.removeElements(fullBoard, difficultyLevel);
-    
-        // Adjust puzzle board difficulty here by controlling the number of removed cells
-        if (difficultyLevel.equals("Hard")) {
-            puzzleBoard = remover.removeElements(fullBoard, "Hard"); // More cells removed
-        } else if (difficultyLevel.equals("Medium")) {
-            puzzleBoard = remover.removeElements(fullBoard, "Medium");
-        } else {
-            puzzleBoard = remover.removeElements(fullBoard, "Easy");
+    private void undoMove() {
+        if (!moveStack.isEmpty()) {
+            int[] move = moveStack.pop();
+            puzzleBoard[move[0]][move[1]] = move[2];
+            cells[move[0]][move[1]].setText(move[2] == 0 ? "" : String.valueOf(move[2]));
+            cells[move[0]][move[1]].setForeground(Color.BLACK);
+            cells[move[0]][move[1]].setBackground(null);
         }
-        updateBoardUI();
     }
-    
 
-    // private void updateBoardUI() {
-    //     for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
-    //         JButton cell = cells[i][j];
-    //         if (puzzleBoard[i][j] != 0) {
-    //             cell.setText(String.valueOf(puzzleBoard[i][j]));
-    //             cell.setForeground(Color.BLACK);
-    //             cell.setEnabled(false);
-    //         } else {
-    //             cell.setText("");
-    //             cell.setEnabled(true);
-    //             cell.setForeground(Color.BLUE);
-    //             cell.setBorder(UIManager.getBorder("Button.border"));
-    //         }
-    //     }
-    //     selectedRow = selectedCol = -1;
-    //     moveStack.clear();
-    // }
-    
-    private void updateBoardUI() {
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 9; j++) {
-                JButton cell = cells[i][j];
-                if (puzzleBoard[i][j] != 0) {
-                    cell.setText(String.valueOf(puzzleBoard[i][j]));
-                    cell.setForeground(Color.BLACK); // Full cells should have black text
-                    cell.setFont(new Font("Monospaced", Font.BOLD, 20));  // Bold text
-                    cell.setEnabled(false);  // Disable editing for these cells
-                } else {
-                    cell.setText("");
-                    cell.setEnabled(true);
-                    cell.setForeground(Color.BLACK); // Make sure empty cells have black text for visibility
-                    cell.setFont(new Font("Monospaced", Font.PLAIN, 20)); // Normal text for editable cells
-                    cell.setBorder(UIManager.getBorder("Button.border"));
-                }
+    private void useHint() {
+        if (hintsUsed >= MAX_HINTS) {
+            JOptionPane.showMessageDialog(this, "No hints left!");
+            return;
+        }
+        for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
+            if (puzzleBoard[i][j] == 0) {
+                puzzleBoard[i][j] = fullBoard[i][j];
+                cells[i][j].setText(String.valueOf(fullBoard[i][j]));
+                cells[i][j].setForeground(Color.BLUE);
+                hintsUsed++;
+                updateStatusLabels();
+                return;
             }
         }
-        selectedRow = selectedCol = -1;
-        moveStack.clear();
     }
-    
-    
 
+    private void checkWin() {
+        for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
+            if (puzzleBoard[i][j] != fullBoard[i][j]) return;
+        }
+        stopTimer();
+        JOptionPane.showMessageDialog(this, "Congratulations " + playerName + "! You solved the puzzle in " + seconds + " seconds with " + mistakes + " mistakes.");
+        scoreHistory.add(playerName + " - Level: " + difficultyLevel + " - Time: " + seconds + "s - Mistakes: " + mistakes);
+    }
 
-    // private void checkWin() {
+    // private void highlightSameNumber(int value) {
+    //     for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
+    //         if (puzzleBoard[i][j] == value) {
+    //             cells[i][j].setBackground(new Color(173, 216, 230)); // Light blue
+    //         } else {
+    //             cells[i][j].setBackground(Color.WHITE);
+    //         }
+    //     }
+    // }
+
+    // private void useHint() {
+    //     if (hintsUsed >= MAX_HINTS) return;
     //     for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
     //         if (puzzleBoard[i][j] == 0) {
-    //             String txt = cells[i][j].getText();
-    //             if (txt.isEmpty() || Integer.parseInt(txt) != fullBoard[i][j]) return;
+    //             puzzleBoard[i][j] = fullBoard[i][j];
+    //             cells[i][j].setText(String.valueOf(fullBoard[i][j]));
+    //             cells[i][j].setForeground(Color.MAGENTA);
+    //             hintsUsed++;
+    //             updateStatusLabels();
+    //             return;
     //         }
     //     }
-    //     stopTimer();
-    //     String score = playerName + " | " + difficultyLevel + " | Time: " + seconds + "s | Mistakes: " + mistakes;
-    //     scoreHistory.add(score);
-    //     JOptionPane.showMessageDialog(this, "🎉 You Won!\n" + score);
     // }
-
-    // private void checkWin() {
-    //     // Check if all cells are filled and correct
-    //     boolean isWin = true;
-    //     for (int i = 0; i < 9; i++) {
-    //         for (int j = 0; j < 9; j++) {
-    //             if (puzzleBoard[i][j] == 0) {
-    //                 String txt = cells[i][j].getText();
-    //                 // If any empty cell or incorrect value, the player hasn't won yet
-    //                 if (txt.isEmpty() || Integer.parseInt(txt) != fullBoard[i][j]) {
-    //                     isWin = false;
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //         if (!isWin) break;
-    //     }
-    
-    //     if (isWin) {
-    //         stopTimer();
-    //         JOptionPane.showMessageDialog(this, "Congratulations " + playerName + ", you have solved the puzzle!");
-    //         updateScoreHistory();
-    //     }
-    // }
-    
-    // private void updateScoreHistory() {
-    //     // Add the current score to the history (can store the time and mistakes)
-    //     String scoreEntry = "Player: " + playerName + " | Time: " + seconds + "s | Mistakes: " + mistakes;
-    //     scoreHistory.add(scoreEntry);
-    //     // You can store this in a file or display it in a UI later
-    // }
-    private void checkWin() {
-        boolean win = true;
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 9; j++) {
-                if (puzzleBoard[i][j] == 0 || !cells[i][j].getText().equals(String.valueOf(fullBoard[i][j]))) {
-                    win = false;
-                    break;
-                }
-            }
-        }
-        if (win) {
-            stopTimer();
-            JOptionPane.showMessageDialog(this, "Congratulations, you win!");
-        }
-    }
-    
-    
-    
-
-    private void startTimer() {
-        gameTimer = new javax.swing.Timer(1000, e -> {
-            seconds++;
-            updateStatusLabels();
-        });
-        gameTimer.start();
-    }
-
-    private void stopTimer() {
-        if (gameTimer != null) gameTimer.stop();
-    }
 
     // private void undoMove() {
     //     if (!moveStack.isEmpty()) {
-    //         int[] last = moveStack.pop();
-    //         cells[last[0]][last[1]].setText("");
+    //         int[] lastMove = moveStack.pop();
+    //         puzzleBoard[lastMove[0]][lastMove[1]] = 0;
+    //         cells[lastMove[0]][lastMove[1]].setText("");
+    //         updateStatusLabels();
     //     }
     // }
 
-    private void undoMove() {
-        if (!moveStack.isEmpty()) {
-            int[] lastMove = moveStack.pop();
-            int row = lastMove[0];
-            int col = lastMove[1];
-            puzzleBoard[row][col] = 0;  // Reset the puzzleBoard
-            cells[row][col].setText("");  // Clear the cell
-            mistakes--;  // Decrease mistakes count
-            updateStatusLabels();
-        }
-    }
-    
+   
+
+    // private void updateStatusLabels() {
+    //     mistakeLabel.setText("Mistakes: " + mistakes);
+    //     hintLabel.setText("Hints Left: " + (MAX_HINTS - hintsUsed));
+    //     if (mistakes >= 4) {
+    //         stopTimer();
+    //         String[] levels = {"Easy", "Medium", "Hard"};
+    //         String newLevel = (String) JOptionPane.showInputDialog(this, "Too many mistakes! Select new difficulty:", "New Game", JOptionPane.QUESTION_MESSAGE, null, levels, difficultyLevel);
+    //         if (newLevel != null) difficultyLevel = newLevel;
+    //         generatePuzzle();
+    //         resetGameState();
+    //         startTimer();
+    //     }
+    // }
+
+    // private void startTimer() {
+    //     gameTimer = new javax.swing.Timer(1000, e -> {
+    //         seconds++;
+    //         timerLabel.setText("Time: " + seconds + "s");
+    //     });
+    //     gameTimer.start();
+    // }
+
+    // private void stopTimer() {
+    //     if (gameTimer != null) gameTimer.stop();
+    // }
+
+    // private void resetGameState() {
+    //     seconds = 0;
+    //     mistakes = 0;
+    //     hintsUsed = 0;
+    //     updateStatusLabels();
+    // }
+
+    // private void generatePuzzle() {
+    //     fullBoard = SudokuCreator.generateFullBoard();
+    //     puzzleBoard = SudokuRemover.removeCells(deepCopy(fullBoard), difficultyLevel);
+
+    //     for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) {
+    //         JButton cell = cells[i][j];
+    //         int value = puzzleBoard[i][j];
+    //         cell.setText(value == 0 ? "" : String.valueOf(value));
+    //         cell.setEnabled(value == 0);
+    //         cell.setForeground(Color.BLACK);
+    //         cell.setBackground(Color.WHITE);
+    //         cell.setBorder(BorderFactory.createMatteBorder(
+    //                 i % 3 == 0 ? 3 : 1,
+    //                 j % 3 == 0 ? 3 : 1,
+    //                 (i + 1) % 3 == 0 ? 3 : 1,
+    //                 (j + 1) % 3 == 0 ? 3 : 1,
+    //                 Color.BLACK
+    //         ));
+    //     }
+    //     moveStack.clear();
+    // }
+
+    // private int[][] deepCopy(int[][] board) {
+    //     int[][] copy = new int[9][9];
+    //     for (int i = 0; i < 9; i++) System.arraycopy(board[i], 0, copy[i], 0, 9);
+    //     return copy;
+    //}
+
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            String playerName = JOptionPane.showInputDialog("Enter your name:");
-            if (playerName == null || playerName.trim().isEmpty()) playerName = "Player";
-    
+            String player = JOptionPane.showInputDialog(null, "Enter player name:");
+            if (player == null || player.trim().isEmpty()) player = "Player";
             String[] levels = {"Easy", "Medium", "Hard"};
-            String level = (String) JOptionPane.showInputDialog(null, "Select difficulty:", "Difficulty",
-                    JOptionPane.QUESTION_MESSAGE, null, levels, "Easy");
-    
-            if (level != null) {
-                new SudokuGame(playerName, level);
-            } else {
-                System.exit(0);
-            }
+            String level = (String) JOptionPane.showInputDialog(null, "Select difficulty:", "Level",
+                    JOptionPane.QUESTION_MESSAGE, null, levels, levels[0]);
+            if (level == null) level = "Easy";
+            new SudokuGame(player, level);
         });
     }
-    
 }
